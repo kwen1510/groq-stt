@@ -1,106 +1,148 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Groq Whisper Turbo Transcriber</title>
   <script src="https://cdn.tailwindcss.com"></script>
-  <script src="https://unpkg.com/lucide@latest"></script>
 </head>
-<body class="bg-gradient-to-br from-gray-50 to-gray-200 min-h-screen flex flex-col items-center justify-center text-gray-800">
+<body class="bg-gradient-to-br from-gray-50 to-gray-200 min-h-screen flex items-center justify-center text-gray-800">
   <div class="bg-white shadow-xl rounded-2xl p-6 w-full max-w-md text-center">
-    <h1 class="text-2xl font-bold mb-4">🎧 Groq Whisper Transcriber</h1>
+    <h1 class="text-2xl font-bold text-indigo-700 mb-4">🎧 Groq Whisper Transcriber</h1>
 
     <button id="recordBtn"
       class="px-6 py-3 bg-indigo-600 text-white font-semibold rounded-full shadow hover:bg-indigo-700 transition flex items-center justify-center gap-2 mx-auto">
-      <i data-lucide="mic"></i><span>Record</span>
+      <!-- Inline SVGs so we can toggle safely -->
+      <svg id="micIcon" xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+        <path stroke-linecap="round" stroke-linejoin="round"
+          d="M12 14a3 3 0 003-3V7a3 3 0 10-6 0v4a3 3 0 003 3zm5-3a5 5 0 11-10 0M12 19v3m-4 0h8"/>
+      </svg>
+      <svg id="stopIcon" xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 hidden" viewBox="0 0 24 24" fill="currentColor">
+        <rect x="6" y="6" width="12" height="12" rx="2"></rect>
+      </svg>
+      <span id="btnLabel">Record</span>
     </button>
 
-    <div id="status" class="mt-4 text-gray-500 text-sm"></div>
+    <div id="status" class="mt-4 text-gray-600 text-sm min-h-[20px]"></div>
 
-    <textarea id="transcript"
-      placeholder="Transcribed text will appear here..."
-      class="hidden w-full mt-4 border border-gray-300 rounded-lg p-3 resize-none h-40 focus:ring-2 focus:ring-indigo-500 outline-none"></textarea>
+    <textarea id="transcript" placeholder="Transcribed text will appear here..."
+      class="hidden w-full mt-4 border border-gray-300 rounded-lg p-3 resize-none h-40 focus:ring-2 focus:ring-indigo-500 outline-none"
+      readonly></textarea>
 
-    <div id="meta" class="hidden mt-3 text-xs text-gray-500 bg-gray-100 rounded-md p-2 text-left"></div>
+    <div id="meta" class="hidden mt-3 text-xs text-gray-600 bg-gray-100 rounded-md p-2 text-left"></div>
 
-    <button id="editBtn"
-      class="hidden mt-4 px-4 py-2 text-indigo-600 font-semibold hover:underline transition">
-      ✏️ Edit Transcript
-    </button>
-
-    <button id="deleteKeyBtn"
-      class="hidden mt-4 text-red-500 text-sm hover:underline">🗝️ Delete API Key</button>
+    <div class="flex items-center justify-center gap-6 mt-4">
+      <button id="editBtn" class="hidden text-indigo-600 font-semibold hover:underline flex items-center gap-2">
+        <span>✏️</span> Edit Transcript
+      </button>
+      <button id="deleteKeyBtn" class="hidden text-orange-600 font-semibold hover:underline flex items-center gap-2">
+        <span>🔑</span> Delete API Key
+      </button>
+    </div>
   </div>
 
   <script>
-    lucide.createIcons();
-
     const recordBtn = document.getElementById('recordBtn');
+    const micIcon = document.getElementById('micIcon');
+    const stopIcon = document.getElementById('stopIcon');
+    const btnLabel = document.getElementById('btnLabel');
     const statusDiv = document.getElementById('status');
     const transcriptArea = document.getElementById('transcript');
     const metaDiv = document.getElementById('meta');
     const editBtn = document.getElementById('editBtn');
     const deleteKeyBtn = document.getElementById('deleteKeyBtn');
 
-    let mediaRecorder;
-    let chunks = [];
-    let isRecording = false;
     const WHISPER_MODEL = "whisper-large-v3-turbo";
+    const API_STORAGE_KEY = "groq_api_key";
 
-    // 🗝️ API Key Handling (Session Storage)
+    let mediaRecorder, chunks = [], isRecording = false, chosenType = "", fileExt = "webm";
+
+    // ---------- API key ----------
     function getAPIKey() {
-      let key = sessionStorage.getItem("groq_api_key");
+      let key = sessionStorage.getItem(API_STORAGE_KEY);
       if (!key) {
         key = prompt("Enter your Groq API Key:");
-        if (key && key.trim() !== "") {
-          sessionStorage.setItem("groq_api_key", key.trim());
-          alert("✅ API Key saved for this session!");
+        if (key && key.trim()) {
+          sessionStorage.setItem(API_STORAGE_KEY, key.trim());
+          alert("✅ API Key saved for this session.");
         } else {
-          alert("❌ No API key provided. Reload to try again.");
+          updateStatus("No API key provided. Click Record again to retry.", true);
+          return null;
         }
       }
       return key;
     }
-
     function deleteAPIKey() {
-      sessionStorage.removeItem("groq_api_key");
-      alert("🗝️ API key deleted from session storage.");
+      sessionStorage.removeItem(API_STORAGE_KEY);
+      alert("🗝️ API key removed from session storage.");
       location.reload();
     }
+    if (window.location.pathname.endsWith("/deletekey")) deleteAPIKey();
+    deleteKeyBtn.addEventListener('click', deleteAPIKey);
 
-    // 🚀 Handle /deletekey route
-    if (window.location.pathname.endsWith("/deletekey")) {
-      deleteAPIKey();
+    // ---------- UI helpers ----------
+    function updateStatus(msg, isError=false) {
+      statusDiv.textContent = msg || "";
+      statusDiv.className = "mt-4 text-sm min-h-[20px] " + (isError ? "text-red-600" : "text-gray-600");
+    }
+    function setRecordingUI(active) {
+      isRecording = active;
+      micIcon.classList.toggle('hidden', active);
+      stopIcon.classList.toggle('hidden', !active);
+      btnLabel.textContent = active ? 'Stop' : 'Record';
     }
 
-    // 🎙️ Recording Logic
+    // ---------- Recording ----------
     recordBtn.addEventListener('click', async () => {
-      if (!isRecording) startRecording();
-      else stopRecording();
+      if (!isRecording) startRecording(); else stopRecording();
     });
 
     async function startRecording() {
+      // Must be HTTPS or localhost
+      if (!window.isSecureContext && location.hostname !== "localhost") {
+        updateStatus("Microphone requires HTTPS or localhost. Serve the file via a local server (not file://).", true);
+        return;
+      }
+      if (!navigator.mediaDevices?.getUserMedia) {
+        updateStatus("getUserMedia is not supported in this browser.", true);
+        return;
+      }
+      if (typeof MediaRecorder === "undefined") {
+        updateStatus("MediaRecorder is not supported here. Try Chrome/Edge or iOS 14.3+ Safari.", true);
+        return;
+      }
+
       try {
         const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-        mediaRecorder = new MediaRecorder(stream);
+
+        const candidates = ['audio/webm;codecs=opus','audio/ogg;codecs=opus','audio/mp4'];
+        chosenType = "";
+        for (const t of candidates) if (MediaRecorder.isTypeSupported(t)) { chosenType = t; break; }
+        if (!chosenType) chosenType = 'audio/webm';
+
+        fileExt = chosenType.includes('ogg') ? 'ogg' : chosenType.includes('mp4') ? 'm4a' : 'webm';
+        mediaRecorder = new MediaRecorder(stream, chosenType ? { mimeType: chosenType } : undefined);
         chunks = [];
 
-        mediaRecorder.ondataavailable = e => chunks.push(e.data);
+        mediaRecorder.ondataavailable = e => { if (e.data && e.data.size) chunks.push(e.data); };
         mediaRecorder.onstop = async () => {
-          const blob = new Blob(chunks, { type: 'audio/webm' });
-          const file = new File([blob], 'recording.webm', { type: 'audio/webm' });
-          await transcribeAudio(file);
+          try {
+            const blob = new Blob(chunks, { type: chosenType || 'audio/webm' });
+            const file = new File([blob], `recording.${fileExt}`, { type: chosenType || 'audio/webm' });
+            await transcribeAudio(file);
+          } catch (e) {
+            updateStatus("Failed to prepare audio for upload.", true);
+            console.error(e);
+          }
         };
 
         mediaRecorder.start();
-        isRecording = true;
-        recordBtn.querySelector('i').setAttribute('data-lucide', 'square');
-        lucide.createIcons();
-        recordBtn.querySelector('span').textContent = 'Stop';
-        statusDiv.textContent = '🎙️ Recording... Speak now.';
+        setRecordingUI(true);
+        updateStatus("🎙️ Recording... Speak now.");
       } catch (err) {
-        statusDiv.textContent = 'Error accessing microphone.';
+        if (err.name === "NotAllowedError") updateStatus("Microphone permission denied. Check site permissions.", true);
+        else if (err.name === "NotFoundError") updateStatus("No microphone detected. Plug one in and try again.", true);
+        else updateStatus(`Error starting microphone: ${err.message}`, true);
         console.error(err);
       }
     }
@@ -108,14 +150,12 @@
     function stopRecording() {
       if (mediaRecorder && isRecording) {
         mediaRecorder.stop();
-        isRecording = false;
-        recordBtn.querySelector('i').setAttribute('data-lucide', 'mic');
-        lucide.createIcons();
-        recordBtn.querySelector('span').textContent = 'Record';
-        statusDiv.textContent = 'Processing audio...';
+        setRecordingUI(false);
+        updateStatus("Processing audio...");
       }
     }
 
+    // ---------- Transcription ----------
     async function transcribeAudio(file) {
       const apiKey = getAPIKey();
       if (!apiKey) return;
@@ -125,20 +165,21 @@
       formData.append("model", WHISPER_MODEL);
       formData.append("temperature", "0");
       formData.append("response_format", "verbose_json");
+      formData.append("language", "en"); // force English
 
       try {
         const res = await fetch("https://api.groq.com/openai/v1/audio/transcriptions", {
           method: "POST",
-          headers: {
-            Authorization: `Bearer ${apiKey}`
-          },
+          headers: { Authorization: `Bearer ${apiKey}` },
           body: formData
         });
-
+        if (!res.ok) {
+          const text = await res.text();
+          throw new Error(`HTTP ${res.status} — ${text}`);
+        }
         const data = await res.json();
-        if (!data.text) throw new Error("No text field in response");
 
-        transcriptArea.value = data.text;
+        transcriptArea.value = data.text || "(No transcription in response)";
         transcriptArea.classList.remove("hidden");
         metaDiv.classList.remove("hidden");
         editBtn.classList.remove("hidden");
@@ -148,10 +189,9 @@
           <p><strong>Language:</strong> ${data.language || "unknown"}</p>
           <p><strong>Duration:</strong> ${data.duration ? data.duration.toFixed(2) + "s" : "N/A"}</p>
         `;
-
-        statusDiv.textContent = "✅ Transcription complete!";
+        updateStatus("✅ Transcription complete!");
       } catch (error) {
-        statusDiv.textContent = "❌ Error during transcription.";
+        updateStatus("❌ Transcription failed. See console for details.", true);
         console.error(error);
       }
     }
@@ -159,10 +199,8 @@
     editBtn.addEventListener('click', () => {
       transcriptArea.removeAttribute('readonly');
       transcriptArea.focus();
-      statusDiv.textContent = "You can now edit your text.";
+      updateStatus("You can now edit your text.");
     });
-
-    deleteKeyBtn.addEventListener('click', deleteAPIKey);
   </script>
 </body>
 </html>
